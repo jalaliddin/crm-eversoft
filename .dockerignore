@@ -1,0 +1,19 @@
+# Never ship secrets, local state or host-built dependencies into images.
+**/.env
+**/.env.*
+!**/.env.example
+.git
+.claude
+**/node_modules
+frontend/dist
+backend/vendor
+backend/bootstrap/cache/*.php
+backend/storage/logs/*
+backend/storage/framework/cache/*
+backend/storage/framework/sessions/*
+backend/storage/framework/views/*
+backend/storage/app/public/*
+backend/storage/app/private/*
+backend/.phpunit.result.cache
+hik-bridge/state
+*.log

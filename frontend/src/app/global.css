@@ -1,0 +1,49 @@
+:root {
+  --app-bg: #f5f7f8;
+  --app-border: #e3e8ec;
+  --app-muted-surface: #eef2f4;
+  --app-shift-window: #d9e9eb;
+  --app-shift-worked: var(--mantine-color-khiva-6);
+  --app-shift-late: var(--mantine-color-saffron-5);
+  --app-shift-early: var(--mantine-color-orange-6);
+
+  /* Chart status scale — validated with the dataviz palette checker (light surface). */
+  --viz-good: #0f9a7e;
+  --viz-warning: #eda100;
+  --viz-critical: #d42f2f;
+  --viz-series: #0e7c86;
+}
+
+[data-mantine-color-scheme='dark'] {
+  --app-bg: var(--mantine-color-dark-8);
+  --app-border: var(--mantine-color-dark-5);
+  --app-muted-surface: var(--mantine-color-dark-6);
+  --app-shift-window: var(--mantine-color-dark-4);
+  --app-shift-worked: var(--mantine-color-khiva-5);
+
+  /* Dark steps chosen and validated against the dark surface, not auto-inverted. */
+  --viz-good: #199e70;
+  --viz-warning: #c98500;
+  --viz-critical: #c23b3b;
+  --viz-series: #26a3ad;
+}
+
+html,
+body {
+  background: var(--app-bg);
+  font-feature-settings: 'tnum' 1, 'cv11' 1;
+  -webkit-font-smoothing: antialiased;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

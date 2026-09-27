@@ -1,0 +1,31 @@
+# Environment & secrets
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+frontend/.env.local
+hik-bridge/.env
+hik-bridge/state/
+
+# Dependencies & builds
+node_modules/
+backend/vendor/
+frontend/dist/
+
+# Laravel runtime
+backend/storage/*.key
+backend/storage/logs/*.log
+backend/storage/framework/cache/*
+backend/storage/framework/sessions/*
+backend/storage/framework/views/*
+backend/bootstrap/cache/*.php
+backend/public/storage
+backend/.phpunit.result.cache
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp

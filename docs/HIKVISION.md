@@ -1,0 +1,119 @@
+# Hikvision integration (DS-K1A340FWX)
+
+> **Verification status.** The adapter is tested against a faked ISAPI (HTTP digest, pagination,
+> errors) and end to end through the on-site bridge with a digest-verifying mock terminal. It has
+> **not yet been exercised against a physical DS-K1A340FWX from this codebase.** The endpoints are
+> the ones already used in production against this model in the team's `hr2.urtg.uz` project. Run
+> the checklist below on the real device before relying on it.
+
+## Architecture
+
+```text
+Controller ─▶ AttendanceDeviceManager ─▶ AttendanceSyncService ─▶ HikvisionAttendanceDevice ─▶ HikvisionClient ─▶ device
+                (vendor → driver)          (lock, window,          (AttendanceDeviceInterface)   (digest, timeout,
+                                            ingest, process)                                      retry, logging)
+```
+
+- `AttendanceDeviceInterface`: `testConnection()`, `getEvents($from, $to)`, `syncEmployees()`,
+  `pushEmployee()`, `removeEmployee()`.
+- `HikvisionEventMapper` turns `AcsEvent.InfoList[]` into vendor-neutral `DeviceEvent`s.
+- `FakeAttendanceDevice` (vendor `fake`) is a simulator for development and tests.
+  `settings.offline=true` simulates an unreachable device.
+- Other vendors (ZKTeco, Suprema…) register with `AttendanceDeviceManager::extend('vendor', fn)`.
+  Nothing else changes.
+
+## ISAPI calls used
+
+| Purpose | Call |
+|---|---|
+| Connection test / serial / firmware | `GET /ISAPI/System/deviceInfo` (XML) |
+| Events | `POST /ISAPI/AccessControl/AcsEvent?format=json` with `AcsEventCond {searchID, searchResultPosition, maxResults, major: 5, minor: 0, startTime, endTime}`; paginate while `responseStatusStrg = "MORE"` |
+| Add user | `POST /ISAPI/AccessControl/UserInfo/Record?format=json` |
+| Update user (keeps face data) | `PUT /ISAPI/AccessControl/UserInfo/Modify?format=json`, used when Record answers `employeeNoAlreadyExist` |
+| Remove user | `PUT /ISAPI/AccessControl/UserInfo/Delete?format=json` |
+
+**Event fields used:** `time` (with offset), `employeeNoString`, `cardNo`, `serialNo` (dedup key
+`sn:<serialNo>`), `attendanceStatus` (checkIn/checkOut/break…/overtime…/undefined), `major`,
+`minor`, `name`, `currentVerifyMode`. Entries without a person or card, such as door alarms, are
+skipped. When a firmware omits `serialNo`, a deterministic hash of
+device + identifier + card + time + type is used instead.
+
+Check-in and check-out are derived from the **first and last punch of the business day**, not from
+`attendanceStatus`. Many firmwares report `undefined`, and people forget to press the status key.
+
+**Resilience:**
+
+- Timeouts are configurable: `HIKVISION_TIMEOUT` and `HIKVISION_CONNECT_TIMEOUT`.
+- Only network errors are retried (`HIKVISION_RETRIES`).
+- HTTP 401 is reported as a credentials problem.
+- Other HTTP errors include the ISAPI `subStatusCode`.
+- A failed sync never throws. It records `last_sync_status=failed` and `last_error` on the device, and
+  punches stored before the failure are still processed.
+- Logs go to `storage/logs/hikvision-*.log` and `attendance-*.log` (JSON). Passwords are never logged.
+
+The device password is stored with Laravel's `encrypted` cast (AES-256, `APP_KEY`), is write-only in
+the API (`has_password: true`), and is excluded from audit logs.
+
+## Connection modes
+
+**Direct.** The server reaches the terminal (public IP, VPN or port forward). The scheduler runs
+`attendance:sync --queue` every 5 minutes. It reads from `last_event_at − 10 min` (overlap) up to now,
+in 24-hour windows, and the first sync looks back `ATTENDANCE_INITIAL_LOOKBACK_DAYS`.
+
+**Bridge (recommended when the terminal is on an office LAN).**
+
+1. In the CRM, go to **Settings → Attendance devices → Add device**, choose **On-site bridge pushes
+   events**, then **Generate bridge token**. The token is shown once and only its SHA-256 is stored.
+2. On any machine in the office network, run `hik-bridge` (see `hik-bridge/README.md`):
+
+   ```bash
+   DEVICE_URL=http://192.168.1.64 DEVICE_PASSWORD=… BRIDGE_TOKEN=hbr_… CRM_URL=https://crm.eversoft.uz npm start
+   ```
+
+3. The agent polls the terminal, pushes batches to `POST /api/v1/device-bridge/events`
+   (`Authorization: Bearer hbr_…`), and stores its progress in a state file. Retries are safe because
+   the server deduplicates.
+
+## Mapping employees
+
+Every employee needs a **terminal ID**: the terminal's `employeeNo`, under
+**Employee → Terminal IDs**. It is *not* assumed to equal the database id or the employee number. An
+ID can apply to all devices (`device_id = NULL`) or to one device. A card number can be stored as a
+fallback match. **Push employees to device** creates or updates users on the terminal. Faces and
+fingerprints are enrolled on the terminal itself.
+
+## On-device verification checklist
+
+Run these against the real DS-K1A340FWX and record the firmware version.
+
+1. **Network.** From the server (or the bridge host), `curl --digest -u admin:PASS http://IP/ISAPI/System/deviceInfo`
+   returns XML with `<model>DS-K1A340FWX</model>`. If the answer is 401 with the right password, check
+   that digest auth is enabled (web UI → Configuration → Security → Authentication).
+2. **Clock.** The terminal clock and timezone are correct (Configuration → System → Time settings,
+   NTP recommended). Wrong clocks produce wrong lateness.
+3. **Test connection** in the CRM. It should report the model, serial and firmware.
+4. **Map one employee.** Add their terminal ID in the CRM, then click **Push employees to device** and
+   confirm the user appears on the terminal (Person management).
+5. **Enroll a face** for that person on the terminal and make 3–4 punches.
+6. **Sync now.** The punches appear under **Punch log** as `processed`, and the attendance record
+   shows the first punch as check-in and the last as check-out.
+7. **Sync again.** It reports 0 new and N duplicates (deduplication works with this firmware's
+   `serialNo`).
+8. **Unknown person.** A punch by someone without a mapping appears under **Unmatched punches**. Map
+   it, then **Reprocess all**; the record is created.
+9. **Pagination.** With more than 30 events in the window, confirm that all are imported. If the
+   device rejects `maxResults`, lower `HIKVISION_PAGE_SIZE`.
+10. **Offline.** Unplug the terminal, then **Sync now**. The device shows *Last sync failed* with a
+    readable message and nothing else breaks.
+11. **Modify path.** Change an employee's name, then **Push employees to device**. Confirm the terminal
+    keeps the enrolled face; this exercises `UserInfo/Modify`.
+
+## Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| `Authentication failed` | Username and password; digest enabled; the account is not locked after failed attempts |
+| `Device unreachable` | IP and port from the server/bridge host; firewall; use bridge mode for LAN-only terminals |
+| Punches stay `unmatched` | Terminal ID mapping matches the terminal's `employeeNo` exactly |
+| Times off by hours | Terminal timezone; set `settings.timezone` on the device if its clock is not in the organization timezone |
+| Everyone shows `incomplete` | People punch only once per day; the day was closed before check-outs were synced (re-sync, then *Recalculate period*) |

@@ -1,0 +1,14 @@
+{
+  "name": "eversoft-hik-bridge",
+  "version": "1.0.0",
+  "description": "On-site agent: reads access-control events from a Hikvision terminal (ISAPI) and pushes them to Eversoft CRM.",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=20" },
+  "bin": { "hik-bridge": "src/index.js" },
+  "scripts": {
+    "start": "node src/index.js",
+    "once": "node src/index.js --once",
+    "test": "node --test test/*.test.js"
+  }
+}

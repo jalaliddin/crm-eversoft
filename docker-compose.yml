@@ -1,0 +1,125 @@
+# Eversoft CRM — development stack.
+#   docker compose up -d --build
+# Production: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+
+# Container networking and Redis-backed services always apply in Docker, whatever backend/.env says.
+x-backend-env: &backend-env
+  DB_HOST: mysql
+  REDIS_HOST: redis
+  REDIS_CLIENT: phpredis
+  CACHE_STORE: redis
+  QUEUE_CONNECTION: redis
+  SESSION_DRIVER: redis
+
+x-backend: &backend
+  build:
+    context: .
+    dockerfile: docker/php/Dockerfile
+    target: ${PHP_TARGET:-dev}
+    args:
+      UID: ${UID:-1000}
+      GID: ${GID:-1000}
+  image: eversoft-crm/backend:${IMAGE_TAG:-dev}
+  # All PHP processes (and `docker compose exec`) run as www-data, never root.
+  user: www-data
+  env_file: ./backend/.env
+  environment:
+    <<: *backend-env
+  volumes:
+    - ./backend:/var/www/backend
+  depends_on:
+    mysql:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  nginx:
+    build:
+      context: .
+      dockerfile: docker/nginx/Dockerfile
+      target: ${NGINX_TARGET:-dev}
+    image: eversoft-crm/nginx:${IMAGE_TAG:-dev}
+    ports:
+      - "${APP_PORT:-8080}:80"
+    volumes:
+      - ./backend/public:/var/www/backend/public:ro
+      - ./backend/storage/app/public:/var/www/backend/storage/app/public:ro
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  backend:
+    <<: *backend
+    environment:
+      <<: *backend-env
+      CONTAINER_ROLE: app
+    healthcheck:
+      test: ["CMD-SHELL", "SCRIPT_NAME=/fpm-ping SCRIPT_FILENAME=/fpm-ping REQUEST_METHOD=GET cgi-fcgi -bind -connect 127.0.0.1:9000 | grep -q pong"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  queue:
+    <<: *backend
+    command: ["php", "artisan", "queue:work", "--queue=default", "--sleep=2", "--tries=3", "--max-time=3600", "--timeout=900"]
+    environment:
+      <<: *backend-env
+      CONTAINER_ROLE: queue
+
+  scheduler:
+    <<: *backend
+    command: ["php", "artisan", "schedule:work"]
+    environment:
+      <<: *backend-env
+      CONTAINER_ROLE: scheduler
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/node/Dockerfile
+    image: eversoft-crm/frontend:${IMAGE_TAG:-dev}
+    environment:
+      VITE_API_URL: /api/v1
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/index.html:/app/index.html
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${DB_DATABASE:-eversoft_crm}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root}
+      TZ: UTC
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci", "--default-time-zone=+00:00"]
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./docker/mysql:/docker-entrypoint-initdb.d:ro
+    ports:
+      # Bound to localhost only; never expose the database publicly.
+      - "127.0.0.1:${DB_FORWARD_PORT:-33061}:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-p${DB_ROOT_PASSWORD:-root}", "--silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  mysql-data:
+  redis-data:
