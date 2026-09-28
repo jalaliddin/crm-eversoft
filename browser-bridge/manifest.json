@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Eversoft Terminal Bridge",
+  "version": "1.0.0",
+  "description": "Lets Eversoft CRM, open in this browser, read punches from a Hikvision terminal on the office network.",
+  "minimum_chrome_version": "116",
+  "permissions": ["storage"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "content_scripts": [
+    {
+      "matches": ["https://crm.eversoft.uz/*", "https://*.crm.eversoft.uz/*", "http://localhost/*", "http://127.0.0.1/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "options_ui": { "page": "options.html", "open_in_tab": true },
+  "action": { "default_title": "Eversoft Terminal Bridge settings" },
+  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+}

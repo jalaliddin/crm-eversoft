@@ -1,0 +1,12 @@
+{
+  "name": "eversoft-terminal-bridge",
+  "version": "1.0.0",
+  "description": "Browser extension: lets Eversoft CRM, open in an office browser, read punches from a Hikvision terminal on the local network.",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "pack": "mkdir -p ../frontend/public/downloads && rm -f ../frontend/public/downloads/eversoft-terminal-bridge.zip && zip -qrX ../frontend/public/downloads/eversoft-terminal-bridge.zip manifest.json background.js content.js options.html options.js lib icons"
+  }
+}

@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Services\Attendance;
 
-use App\Enums\DeviceConnectionMode;
 use App\Enums\DeviceStatus;
 use App\Models\Attendance\AttendanceDevice;
 use App\Services\Attendance\Devices\DeviceConnectionException;
@@ -74,7 +73,7 @@ class AttendanceSyncService
             return ['success' => false, 'message' => 'Device is inactive.'];
         }
 
-        if (in_array($device->connection_mode, [DeviceConnectionMode::Bridge, DeviceConnectionMode::Push], true)) {
+        if ($device->connection_mode?->receivesPushes()) {
             // Events are pushed to the CRM; the server cannot reach the device, so only (re)process what is pending.
             $processed = $this->processor->process($device->organization_id, $device->id);
 
@@ -132,6 +131,13 @@ class AttendanceSyncService
     public function markSeen(AttendanceDevice $device): void
     {
         $device->forceFill(['last_sync_at' => now(), 'last_sync_status' => 'ok', 'last_error' => null])->save();
+    }
+
+    /** A remote reader (office browser) reached the terminal but could not read it. */
+    public function markFailed(AttendanceDevice $device, string $error): void
+    {
+        $device->forceFill(['last_sync_at' => now(), 'last_sync_status' => 'failed', 'last_error' => mb_substr($error, 0, 1000)])->save();
+        Log::channel('attendance')->warning('Remote device reader failed', ['device_id' => $device->id, 'organization_id' => $device->organization_id, 'error' => $error]);
     }
 
     private function markSuccess(AttendanceDevice $device, ?CarbonImmutable $latest): void

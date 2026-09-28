@@ -61,6 +61,7 @@ the API (`has_password: true`), and is excluded from audit logs.
 | Direct | Server → terminal (ISAPI) | Yes | Yes (pulls with overlap) |
 | Bridge | Office agent → CRM | No (agent only reads) | Yes (agent pulls, then pushes) |
 | HTTP push | Terminal → CRM (listening host) | No | No: events sent during an outage are lost |
+| Office browser | Office browser with the CRM open → terminal, then → CRM | No (the extension only reads) | Yes, up to 7 days, once a browser is open again |
 
 **Direct.** The server reaches the terminal (public IP, VPN or port forward). The scheduler runs
 `attendance:sync --queue` every 5 minutes. It reads from `last_event_at − 10 min` (overlap) up to now,
@@ -99,6 +100,38 @@ the ISAPI guide documents), as well as a raw JSON or XML body. Heartbeats mark t
 Events without a person or card (door alarms and the like) are logged as `ignored`. Prefer
 `protocolType` HTTPS: over plain HTTP the secret URL and employee data travel unencrypted. Nginx does
 not write push URLs to its access log, but check any reverse proxy in front of it.
+
+**Office browser (no server software on site).** An ordinary web page cannot read the terminal. The
+ISAPI guide says nothing about CORS, so the browser discards the terminal's answers, and digest
+login cannot work from a page for the same reason. An HTTPS page calling a plain-HTTP LAN address is
+also blocked as mixed content. The **Eversoft Terminal Bridge** extension (`browser-bridge/`, Chrome
+or Edge) fills that gap:
+
+1. In the CRM, go to **Settings → Attendance devices → Add device**, choose **Office browser** and enter
+   the terminal's LAN address and port. The server never connects to this address.
+2. On a computer in the office, install the extension. The devices page links to
+   `/downloads/eversoft-terminal-bridge.zip`. Unzip it, open `chrome://extensions`, turn on Developer
+   mode, and choose **Load unpacked**. Then reload the CRM.
+3. On the device card, choose **Set up** and enter the terminal user name and password in the
+   extension. Chrome asks to allow access to that address. The password stays in that browser profile
+   and is never sent to the CRM.
+4. While the CRM is open in any tab of that browser, one tab reads the terminal every minute
+   (`AcsEvent`, the same call as the pull adapter) and posts new punches to
+   `POST /attendance-devices/{id}/browser-events` with the user's session. Other tabs show its status.
+   If that tab closes, another open tab takes over. **Sync now** and **Test connection** go through the
+   extension too.
+
+The extension answers only CRM pages (`crm.eversoft.uz` and its subdomains, and localhost for
+development). It makes only two calls, both read-only: `GET /ISAPI/System/deviceInfo` and the
+`AcsEvent` search. It calls only terminals that someone added in its settings. After a rejected
+password, it stops automatic reads so the terminal does not lock the account. **Sync now** retries, and
+saving a new password resumes them. A computer that cannot reach the terminal, such as a laptop at
+home, shows that on its own screen but does not mark the device as failed for everyone.
+
+Punches are read only while the CRM is open in an office browser. After a gap, such as a weekend, the
+next read catches up from the latest stored punch, up to 7 days back, and the server removes
+duplicates. For readings that never stop, use direct mode, the bridge agent or HTTP push. The
+extension needs Chrome or Edge 116+. Custom tenant domains need their origin added to `manifest.json`.
 
 Access-control events are kept whatever their `subEventType`, as in the pull adapter. Once real
 events have been captured, a filter that keeps only successful authentications can be added; the
@@ -139,7 +172,11 @@ Run these against the real DS-K1A340FWX and record the firmware version.
     **Push log** shows an `accepted` entry within seconds and the punch appears in the attendance
     record. Open the entry and check that the body matches the documented `EventNotificationAlert`; if
     it shows `unparsed`, the body there is exactly what the firmware sent.
-12. **Modify path.** Change an employee's name, then **Push employees to device**. Confirm the terminal
+12. **Office browser.** With the device in office-browser mode and the extension set up on an office
+    computer, keep the CRM open and scan a face. Within a minute the card shows *Read by this
+    browser* and the punch appears. Test once with a wrong password: the card shows the error, and
+    the terminal's log shows no repeated login attempts afterwards.
+13. **Modify path.** Change an employee's name, then **Push employees to device**. Confirm the terminal
     keeps the enrolled face; this exercises `UserInfo/Modify`.
 
 ## Troubleshooting

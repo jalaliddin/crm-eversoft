@@ -13,6 +13,8 @@ hik-bridge/state/
 node_modules/
 backend/vendor/
 frontend/dist/
+# Built by `npm run pack` in browser-bridge/; production images build it themselves.
+frontend/public/downloads/
 
 # Laravel runtime
 backend/storage/*.key

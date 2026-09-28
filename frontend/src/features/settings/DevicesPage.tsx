@@ -24,6 +24,8 @@ import { useListParams } from '@/hooks/useListParams'
 import { useAuth } from '@/features/auth/useAuth'
 import type { AttendanceDevice, DevicePushLog, RawEvent } from '@/types/models'
 import { PushSetup } from './PushSetup'
+import { TerminalBridgeStatus } from './TerminalBridge'
+import { extensionRequest, requestTerminalSync, terminalOrigin, useTerminalBridge } from './terminalBridge'
 
 interface DeviceValues {
   name: string
@@ -86,10 +88,25 @@ function DeviceForm({ device, opened, onClose }: { device?: AttendanceDevice | n
           data={[
             { value: 'direct', label: 'Server connects' },
             { value: 'push', label: 'Terminal pushes' },
-            { value: 'bridge', label: 'On-site bridge' },
+            { value: 'bridge', label: 'Bridge agent' },
+            { value: 'browser', label: 'Office browser' },
           ]}
         />
-        {mode === 'push' ? (
+        {mode === 'browser' ? (
+          <>
+            <Alert mt="sm" variant="light">
+              A CRM page open in a browser on the office network reads the terminal every minute and sends new punches here. That browser needs
+              the Eversoft Terminal Bridge extension, which keeps the terminal password; the CRM never stores it. Punches are read only while the
+              CRM is open somewhere in the office. Missed time is caught up automatically, up to 7 days back.
+            </Alert>
+            <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="sm" mt="sm">
+              <FormField control={form.control} name="protocol" label="Protocol" kind="select" data={['http', 'https']} />
+              <FormField control={form.control} name="ip_address" label="Terminal address on the office network" required placeholder="192.168.1.64" />
+              <FormField control={form.control} name="port" label="Port" kind="number" min={1} max={65535} />
+              <FormField control={form.control} name="settings.timezone" label="Device timezone" placeholder="Organization timezone" />
+            </SimpleGrid>
+          </>
+        ) : mode === 'push' ? (
           <Alert mt="sm" variant="light">
             The terminal sends each event to the CRM itself (its HTTP listening host). No inbound access to the terminal is needed.
             After saving, choose <strong>Generate push URL</strong> in the device menu and enter it on the terminal. Missed events during an
@@ -119,9 +136,17 @@ interface IssuedToken {
 
 function DeviceCard({ device, onEdit, onToken }: { device: AttendanceDevice; onEdit: () => void; onToken: (issued: IssuedToken) => void }) {
   const { can } = useAuth()
+  const bridge = useTerminalBridge()
+  // Office-browser devices are tested and read through the extension when this browser has it.
+  const viaBrowser = device.connection_mode === 'browser' && bridge.extension === 'ready'
   const invalidate = [['attendance-devices'], ['attendance'], ['raw-events']]
   const test = useApiMutation<{ success: boolean; message: string; latency_ms: number | null; info: Record<string, string> }>({
-    mutationFn: () => api.post(`/attendance-devices/${device.id}/test`),
+    mutationFn: async () => {
+      if (!viaBrowser) return api.post(`/attendance-devices/${device.id}/test`)
+      const started = performance.now()
+      const info = await extensionRequest<{ model: string | null; serialNumber: string | null }>('deviceInfo', { origin: terminalOrigin(device) }, 20_000)
+      return { success: true, message: null, data: { success: true, message: 'Connected from this browser.', latency_ms: Math.round(performance.now() - started), info: { model: info.model ?? '' } } }
+    },
     invalidate: [['attendance-devices']],
     successMessage: (r) => (r.success ? `Connected${r.latency_ms ? ` in ${r.latency_ms} ms` : ''}${r.info.model ? ` · ${r.info.model}` : ''}.` : ''),
     onSuccess: (r) => { if (!r.success) notifyError(new Error(r.message)) },
@@ -148,7 +173,14 @@ function DeviceCard({ device, onEdit, onToken }: { device: AttendanceDevice; onE
             {device.vendor === 'fake' && <Badge color="gray">Simulator</Badge>}
           </Group>
           <Text size="sm" c="dimmed">
-            {[device.model, device.connection_mode === 'bridge' ? 'via bridge' : device.connection_mode === 'push' ? 'terminal pushes events' : device.ip_address ? `${device.protocol}://${device.ip_address}:${device.port ?? 80}` : null, device.serial_number].filter(Boolean).join(' · ')}
+            {[
+              device.model,
+              device.connection_mode === 'bridge' ? 'via bridge'
+                : device.connection_mode === 'push' ? 'terminal pushes events'
+                  : device.connection_mode === 'browser' ? `via office browser · ${terminalOrigin(device)}`
+                    : device.ip_address ? `${device.protocol}://${device.ip_address}:${device.port ?? 80}` : null,
+              device.serial_number,
+            ].filter(Boolean).join(' · ')}
           </Text>
         </div>
         {can('devices.manage') && (
@@ -180,10 +212,20 @@ function DeviceCard({ device, onEdit, onToken }: { device: AttendanceDevice; onE
 
       {device.last_sync_status === 'failed' && device.last_error && <Alert mt="md" color="red" variant="light" title="Last sync failed">{device.last_error}</Alert>}
 
+      {device.connection_mode === 'browser' && device.status === 'active' && <TerminalBridgeStatus device={device} />}
+
       {can('devices.sync') && (
         <Group mt="md" gap="xs">
           <Button size="xs" variant="default" leftSection={<IconPlugConnected size={14} />} loading={test.isPending} onClick={() => test.mutate()}>Test connection</Button>
-          <Button size="xs" leftSection={<IconRefresh size={14} />} loading={sync.isPending} onClick={() => sync.mutate()} disabled={device.status !== 'active'}>Sync now</Button>
+          <Button
+            size="xs"
+            leftSection={<IconRefresh size={14} />}
+            loading={viaBrowser ? bridge.runs[device.id]?.status === 'syncing' : sync.isPending}
+            onClick={() => (viaBrowser ? requestTerminalSync(device.id) : sync.mutate())}
+            disabled={device.status !== 'active'}
+          >
+            Sync now
+          </Button>
           {healthy && <Tooltip label="The last synchronization succeeded"><Badge color="teal" variant="dot">Healthy</Badge></Tooltip>}
         </Group>
       )}
@@ -361,7 +403,7 @@ export default function DevicesPage() {
         </Tabs.List>
         <Tabs.Panel value="devices">
           {isLoading ? <LoadingState /> : !data?.length ? (
-            <EmptyState title="No devices yet" message="Add your Hikvision terminal. If it is not reachable from the internet, choose the on-site bridge." action={can('devices.manage') && <Button onClick={() => setEditing(null)}>Add device</Button>} />
+            <EmptyState title="No devices yet" message="Add your Hikvision terminal. If the server cannot reach it, let the terminal push events, or read it from an office browser."action={can('devices.manage') && <Button onClick={() => setEditing(null)}>Add device</Button>} />
           ) : (
             <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="md">
               {data.map((d) => <DeviceCard key={d.id} device={d} onEdit={() => setEditing(d)} onToken={setIssued} />)}

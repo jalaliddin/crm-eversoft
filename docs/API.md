@@ -74,6 +74,19 @@ Authorization: Bearer hbr_…          (device bridge token, not a user token)
 This accepts up to 1000 events per call and is idempotent (deduplicated by device + external id). It
 returns `received, stored, duplicates, processed, unmatched, records_updated`.
 
+## Office browser events
+
+```http
+POST /api/v1/attendance-devices/{id}/browser-events      (user session, permission devices.sync)
+{ "events": [ …same shape as the bridge ingest… ] }
+{ "events": [], "error": "The terminal rejected the user name or password (HTTP 401)." }
+```
+
+The CRM page sends these for devices in `browser` mode, after the Eversoft Terminal Bridge extension
+has read the terminal. The events and the response are the same as for the bridge ingest. An empty
+batch records that the terminal was read. `error` marks the device as failed with that message. The
+endpoint returns 422 if the device is not in `browser` mode or is inactive.
+
 ## Terminal event push
 
 ```http
@@ -271,6 +284,7 @@ visibility for leads, deals and activities, and `attendance.view` vs `attendance
 | GET | `/attendance-devices/{attendanceDevice}` | `devices.view` |
 | PUT | `/attendance-devices/{attendanceDevice}` | `devices.manage` |
 | POST | `/attendance-devices/{attendanceDevice}/bridge-token` | `devices.manage` |
+| POST | `/attendance-devices/{attendanceDevice}/browser-events` | `devices.sync` |
 | POST | `/attendance-devices/{attendanceDevice}/push-employees` | `devices.manage` |
 | POST | `/attendance-devices/{attendanceDevice}/sync` | `devices.sync` |
 | POST | `/attendance-devices/{attendanceDevice}/test` | `devices.sync` |

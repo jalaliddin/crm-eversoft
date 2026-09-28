@@ -16,6 +16,7 @@ use App\Models\Attendance\AttendanceDevice;
 use App\Models\Attendance\AttendanceDevicePushLog;
 use App\Services\Attendance\AttendanceDeviceManager;
 use App\Services\Attendance\AttendanceSyncService;
+use App\Services\Attendance\Devices\BridgeEventBatch;
 use App\Services\Attendance\Devices\DeviceAddressGuard;
 use App\Services\Attendance\Devices\DeviceConnectionException;
 use App\Services\Audit\AuditLogger;
@@ -74,9 +75,13 @@ class AttendanceDeviceController extends Controller
 
     public function test(AttendanceDevice $attendanceDevice, AttendanceDeviceManager $manager): JsonResponse
     {
-        if (in_array($attendanceDevice->connection_mode, [DeviceConnectionMode::Bridge, DeviceConnectionMode::Push], true)) {
+        if ($attendanceDevice->connection_mode?->receivesPushes()) {
             // The server cannot reach pushing devices; report when data last arrived instead.
-            $source = $attendanceDevice->connection_mode === DeviceConnectionMode::Push ? 'the terminal' : 'the bridge agent';
+            $source = match ($attendanceDevice->connection_mode) {
+                DeviceConnectionMode::Push => 'the terminal',
+                DeviceConnectionMode::Browser => 'an office browser',
+                default => 'the bridge agent',
+            };
 
             return $this->ok([
                 'success' => $attendanceDevice->last_sync_at !== null && $attendanceDevice->last_sync_at->greaterThan(now()->subMinutes(15)),
@@ -152,6 +157,33 @@ class AttendanceDeviceController extends Controller
         ], 'Copy this now; it will not be shown again.');
     }
 
+    /**
+     * Events an office browser read from the terminal on its local network (Eversoft Terminal Bridge extension),
+     * sent with the signed-in user's session. An empty batch means "read, nothing new"; `error` reports a terminal
+     * that answered but could not be read (for example, wrong password).
+     */
+    public function browserEvents(Request $request, AttendanceDevice $attendanceDevice, AttendanceSyncService $sync): JsonResponse
+    {
+        abort_if($attendanceDevice->connection_mode !== DeviceConnectionMode::Browser, 422, 'This device is not read by an office browser.');
+        abort_if($attendanceDevice->status !== DeviceStatus::Active, 422, 'Device is inactive.');
+
+        $data = $request->validate([
+            'events' => ['present', 'array', 'max:1000'],
+            ...BridgeEventBatch::rules(),
+            'error' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        if (isset($data['error'])) {
+            $sync->markFailed($attendanceDevice, 'Office browser: '.$data['error']);
+
+            return $this->ok(['success' => false]);
+        }
+
+        $timezone = $attendanceDevice->settings['timezone'] ?? $attendanceDevice->organization->timezone;
+
+        return $this->ok($sync->ingestPushed($attendanceDevice, BridgeEventBatch::toEvents($data['events'], $timezone)));
+    }
+
     /** Recent requests received from pushing terminals. */
     public function pushLogs(Request $request): JsonResponse
     {
@@ -173,7 +205,9 @@ class AttendanceDeviceController extends Controller
     /** @return array<string, mixed> */
     private function validated(Request $request, ?AttendanceDevice $device = null): array
     {
-        $direct = $request->input('connection_mode', $device?->connection_mode?->value ?? 'direct') === 'direct';
+        $mode = $request->input('connection_mode', $device?->connection_mode?->value ?? 'direct');
+        // In browser mode the address is opened by an office browser, never by the server, so the SSRF guard does not apply.
+        $browser = $mode === DeviceConnectionMode::Browser->value;
         $isHikvision = $request->input('vendor', $device?->vendor?->value) === 'hikvision';
 
         return $request->validate([
@@ -184,9 +218,9 @@ class AttendanceDeviceController extends Controller
             'type' => ['sometimes', Rule::enum(DeviceType::class)],
             'connection_mode' => ['sometimes', Rule::enum(DeviceConnectionMode::class)],
             // Host name or IP address of the terminal.
-            'ip_address' => [$direct && $isHikvision && ! $device ? 'required' : 'nullable', 'string', 'max:255', 'regex:/^[A-Za-z0-9.\-:]+$/',
-                function (string $attribute, mixed $value, \Closure $fail): void {
-                    if (is_string($value) && $value !== '' && ($problem = DeviceAddressGuard::problem($value))) {
+            'ip_address' => [in_array($mode, ['direct', 'browser'], true) && $isHikvision && ! $device ? 'required' : 'nullable', 'string', 'max:255', 'regex:/^[A-Za-z0-9.\-:]+$/',
+                function (string $attribute, mixed $value, \Closure $fail) use ($browser): void {
+                    if (! $browser && is_string($value) && $value !== '' && ($problem = DeviceAddressGuard::problem($value))) {
                         $fail($problem);
                     }
                 }],

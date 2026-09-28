@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Eversoft Terminal Bridge</title>
+  <style>
+    :root { --bg: #f6f7f9; --card: #fff; --text: #1a1d21; --dimmed: #5f6670; --border: #dde1e6; --brand: #0e7c86; --ok: #0b7a4b; --err: #c92a2a; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #16181b; --card: #1f2226; --text: #e9ecef; --dimmed: #9aa3ad; --border: #33383e; --brand: #3fb5bf; --ok: #51cf8a; --err: #ff8787; } }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { max-width: 720px; margin: 0 auto; padding: 32px 16px 48px; }
+    header { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+    header img { width: 32px; height: 32px; }
+    h1 { font-size: 20px; margin: 0; }
+    h2 { font-size: 15px; margin: 0 0 12px; }
+    p { margin: 0 0 12px; color: var(--dimmed); }
+    section { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-top: 20px; }
+    label { display: block; font-weight: 550; margin: 12px 0 4px; }
+    .hint { font-weight: 400; color: var(--dimmed); font-size: 12px; }
+    input { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+    input:focus { outline: 2px solid var(--brand); outline-offset: -1px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 520px) { .row { grid-template-columns: 1fr; } }
+    button { font: inherit; font-weight: 550; border-radius: 6px; padding: 7px 14px; cursor: pointer; border: 1px solid var(--border); background: var(--card); color: var(--text); }
+    button.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+    button:disabled { opacity: .6; cursor: default; }
+    .actions { display: flex; gap: 8px; margin-top: 16px; align-items: center; flex-wrap: wrap; }
+    .status { font-size: 13px; }
+    .status.ok { color: var(--ok); }
+    .status.err { color: var(--err); }
+    ul { list-style: none; margin: 0; padding: 0; }
+    li { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 12px 0; border-top: 1px solid var(--border); flex-wrap: wrap; }
+    li:first-child { border-top: 0; padding-top: 0; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+    .empty { color: var(--dimmed); }
+  </style>
+</head>
+<body>
+  <main>
+    <header><img src="icons/icon48.png" alt=""><h1>Eversoft Terminal Bridge</h1></header>
+    <p>While Eversoft CRM is open in this browser, it reads new punches from the terminals below and sends them to the CRM.
+      Terminal passwords stay in this browser and are never sent to the CRM. The extension can only read events and device information; it cannot change the terminal.</p>
+
+    <section>
+      <h2 id="form-title">Add a terminal</h2>
+      <form id="form" autocomplete="off">
+        <label for="origin">Terminal address <span class="hint">as in the CRM device settings, for example http://192.168.1.64</span></label>
+        <input id="origin" required placeholder="http://192.168.1.64" spellcheck="false">
+        <div class="row">
+          <div>
+            <label for="username">User name</label>
+            <input id="username" value="admin" required spellcheck="false">
+          </div>
+          <div>
+            <label for="password">Password <span class="hint" id="password-hint"></span></label>
+            <input id="password" type="password">
+          </div>
+        </div>
+        <div class="actions">
+          <button class="primary" type="submit" id="save">Save and test</button>
+          <span class="status" id="form-status" role="status"></span>
+        </div>
+      </form>
+    </section>
+
+    <section>
+      <h2>Terminals in this browser</h2>
+      <ul id="list"></ul>
+    </section>
+  </main>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

@@ -226,6 +226,7 @@ Route::prefix('v1')->group(function (): void {
             Route::get('attendance-devices/{attendanceDevice}', [AttendanceDeviceController::class, 'show'])->middleware('can:devices.view');
             Route::post('attendance-devices/{attendanceDevice}/test', [AttendanceDeviceController::class, 'test'])->middleware('can:devices.sync');
             Route::post('attendance-devices/{attendanceDevice}/sync', [AttendanceDeviceController::class, 'sync'])->middleware('can:devices.sync');
+            Route::post('attendance-devices/{attendanceDevice}/browser-events', [AttendanceDeviceController::class, 'browserEvents'])->middleware('can:devices.sync');
             Route::middleware('can:devices.manage')->group(function (): void {
                 Route::post('attendance-devices', [AttendanceDeviceController::class, 'store']);
                 Route::put('attendance-devices/{attendanceDevice}', [AttendanceDeviceController::class, 'update']);

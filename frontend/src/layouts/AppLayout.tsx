@@ -4,6 +4,7 @@ import { useDisclosure } from '@mantine/hooks'
 import { Outlet } from 'react-router'
 import { LoadingState } from '@/components/LoadingState'
 import { NotificationBell } from '@/features/notifications/NotificationBell'
+import { TerminalBridgeRunner } from '@/features/settings/TerminalBridge'
 import { GlobalSearch } from './GlobalSearch'
 import { platformNavigation, tenantNavigation } from './navigation'
 import { Sidebar } from './Sidebar'
@@ -45,6 +46,8 @@ export function AppLayout({ platform = false }: { platform?: boolean }) {
           <Outlet />
         </Suspense>
       </AppShell.Main>
+
+      {!platform && <TerminalBridgeRunner />}
     </AppShell>
   )
 }

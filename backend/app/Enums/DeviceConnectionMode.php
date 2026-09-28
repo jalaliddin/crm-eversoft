@@ -14,6 +14,8 @@ enum DeviceConnectionMode: string
     case Bridge = 'bridge';
     // The terminal itself posts ISAPI event notifications (HTTP listening host) to the CRM.
     case Push = 'push';
+    // A CRM page open in an office browser reads the terminal through the Eversoft Terminal Bridge extension.
+    case Browser = 'browser';
 
     public function label(): string
     {
@@ -21,6 +23,13 @@ enum DeviceConnectionMode: string
             self::Direct => 'Direct',
             self::Bridge => 'Bridge',
             self::Push => 'HTTP push',
+            self::Browser => 'Office browser',
         };
+    }
+
+    /** Events reach the CRM from outside; the server never connects to the terminal. */
+    public function receivesPushes(): bool
+    {
+        return $this !== self::Direct;
     }
 }

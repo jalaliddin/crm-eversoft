@@ -9,6 +9,7 @@ activities and a timeline. On the HR side it covers employees, work schedules, b
 | `backend/` | Laravel 12, PHP 8.3, MySQL 8, Redis, Sanctum, queues, scheduler |
 | `frontend/` | React 19, TypeScript (strict), Mantine 9, React Router 7, TanStack Query, React Hook Form + Zod, Recharts |
 | `hik-bridge/` | Node.js agent for terminals on a private network (optional) |
+| `browser-bridge/` | Chrome/Edge extension: an office browser with the CRM open reads the terminal (optional) |
 | `docker/`, `nginx/` | Docker Compose stack and Nginx reverse proxy |
 
 ## Quick start (Docker)
@@ -74,11 +75,12 @@ npm run dev                          # http://localhost:5173, proxies /api to :8
 ## Quality gates
 
 ```bash
-cd backend && php artisan test        # 111 tests: tenancy, RBAC, CRM, attendance math, Hikvision, payroll
+cd backend && php artisan test        # tenancy, RBAC, CRM, attendance math, Hikvision, payroll
 cd backend && ./vendor/bin/pint --test
 cd frontend && npm run lint           # oxlint (zero warnings) + strict TypeScript
 cd frontend && npm run build
 cd hik-bridge && npm test
+cd browser-bridge && npm test
 ```
 
 Tests always run against a `*_test` database and refuse to start otherwise.

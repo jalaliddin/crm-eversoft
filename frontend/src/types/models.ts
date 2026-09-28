@@ -443,7 +443,7 @@ export interface AttendanceDevice {
   model: string | null
   serial_number: string | null
   type: string
-  connection_mode: 'direct' | 'bridge' | 'push'
+  connection_mode: 'direct' | 'bridge' | 'push' | 'browser'
   ip_address: string | null
   port: number | null
   protocol: 'http' | 'https'

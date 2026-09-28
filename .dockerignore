@@ -6,6 +6,8 @@
 .claude
 **/node_modules
 frontend/dist
+frontend/public/downloads
+browser-bridge/test
 backend/vendor
 backend/bootstrap/cache/*.php
 backend/storage/logs/*
