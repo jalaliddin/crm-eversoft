@@ -32,8 +32,8 @@ Controller ─▶ AttendanceDeviceManager ─▶ AttendanceSyncService ─▶ Hi
 | Update user (keeps face data) | `PUT /ISAPI/AccessControl/UserInfo/Modify?format=json`, used when Record answers `employeeNoAlreadyExist` |
 | Remove user | `PUT /ISAPI/AccessControl/UserInfo/Delete?format=json` |
 
-**Event fields used:** `time` (with offset), `employeeNoString`, `cardNo`, `serialNo` (dedup key
-`sn:<serialNo>`), `attendanceStatus` (checkIn/checkOut/break…/overtime…/undefined), `major`,
+**Event fields used:** `time` (with offset), `employeeNoString`, `cardNo`, `serialNo` (the dedup key is
+`sn:<serialNo>:<UTC time>`, because the guide gives `serialNo` a range of 1–100000 and it wraps around), `attendanceStatus` (checkIn/checkOut/break…/overtime…/undefined), `major`,
 `minor`, `name`, `currentVerifyMode`. Entries without a person or card, such as door alarms, are
 skipped. When a firmware omits `serialNo`, a deterministic hash of
 device + identifier + card + time + type is used instead.
@@ -56,6 +56,12 @@ the API (`has_password: true`), and is excluded from audit logs.
 
 ## Connection modes
 
+| Mode | Who connects | Can the CRM send commands? | Recovers missed events? |
+|---|---|---|---|
+| Direct | Server → terminal (ISAPI) | Yes | Yes (pulls with overlap) |
+| Bridge | Office agent → CRM | No (agent only reads) | Yes (agent pulls, then pushes) |
+| HTTP push | Terminal → CRM (listening host) | No | No: events sent during an outage are lost |
+
 **Direct.** The server reaches the terminal (public IP, VPN or port forward). The scheduler runs
 `attendance:sync --queue` every 5 minutes. It reads from `last_event_at − 10 min` (overlap) up to now,
 in 24-hour windows, and the first sync looks back `ATTENDANCE_INITIAL_LOOKBACK_DAYS`.
@@ -73,6 +79,30 @@ in 24-hour windows, and the first sync looks back `ATTENDANCE_INITIAL_LOOKBACK_D
 3. The agent polls the terminal, pushes batches to `POST /api/v1/device-bridge/events`
    (`Authorization: Bearer hbr_…`), and stores its progress in a state file. Retries are safe because
    the server deduplicates.
+
+**HTTP push (terminal posts events itself).** No inbound access to the terminal is needed.
+
+1. In the CRM, go to **Settings → Attendance devices → Add device** and choose **Terminal pushes**.
+2. Choose **Generate push URL** in the device menu. The dialog shows the URL
+   (`/api/v1/hikvision/push/hpt_…`, secret, shown once, only its SHA-256 is stored) and the terminal
+   setting to apply, with the documented fields of `PUT /ISAPI/Event/notification/httpHosts/1`:
+   `id`, `url`, `protocolType` (HTTP/HTTPS), `parameterFormatType` (JSON/XML), `addressingFormatType`
+   (`hostname`/`ipaddress`), `hostName` or `ipAddress`, `portNo`, `httpAuthenticationMethod` (`none`).
+3. Apply it from a computer in the terminal's network (the dialog gives a `curl --digest … -X PUT`
+   command) or in the terminal's web page, then scan a face.
+4. **Settings → Attendance devices → Push log** shows every request received: result (`accepted`,
+   `heartbeat`, `ignored`, `unparsed`, `rejected`, `failed`), the parsed employee and time, and the text
+   of the request. Pictures are never stored. Entries are kept 14 days.
+
+The receiver accepts multipart/form-data with a JSON or XML `EventNotificationAlert` part (the format
+the ISAPI guide documents), as well as a raw JSON or XML body. Heartbeats mark the device as alive.
+Events without a person or card (door alarms and the like) are logged as `ignored`. Prefer
+`protocolType` HTTPS: over plain HTTP the secret URL and employee data travel unencrypted. Nginx does
+not write push URLs to its access log, but check any reverse proxy in front of it.
+
+Access-control events are kept whatever their `subEventType`, as in the pull adapter. Once real
+events have been captured, a filter that keeps only successful authentications can be added; the
+major/minor codes of every push are stored in the raw event payload for that purpose.
 
 ## Mapping employees
 
@@ -105,7 +135,11 @@ Run these against the real DS-K1A340FWX and record the firmware version.
    device rejects `maxResults`, lower `HIKVISION_PAGE_SIZE`.
 10. **Offline.** Unplug the terminal, then **Sync now**. The device shows *Last sync failed* with a
     readable message and nothing else breaks.
-11. **Modify path.** Change an employee's name, then **Push employees to device**. Confirm the terminal
+11. **HTTP push.** With the device in push mode and the listening host applied, scan a face. The
+    **Push log** shows an `accepted` entry within seconds and the punch appears in the attendance
+    record. Open the entry and check that the body matches the documented `EventNotificationAlert`; if
+    it shows `unparsed`, the body there is exactly what the firmware sent.
+12. **Modify path.** Change an employee's name, then **Push employees to device**. Confirm the terminal
     keeps the enrolled face; this exercises `UserInfo/Modify`.
 
 ## Troubleshooting

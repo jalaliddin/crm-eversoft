@@ -74,11 +74,11 @@ class AttendanceSyncService
             return ['success' => false, 'message' => 'Device is inactive.'];
         }
 
-        if ($device->connection_mode === DeviceConnectionMode::Bridge) {
-            // Events arrive through the bridge; only (re)process what is pending.
+        if (in_array($device->connection_mode, [DeviceConnectionMode::Bridge, DeviceConnectionMode::Push], true)) {
+            // Events are pushed to the CRM; the server cannot reach the device, so only (re)process what is pending.
             $processed = $this->processor->process($device->organization_id, $device->id);
 
-            return ['success' => true, 'message' => 'Bridge device: processed pending events.', ...$processed];
+            return ['success' => true, 'message' => 'Events arrive by push: processed pending events.', ...$processed];
         }
 
         $to ??= CarbonImmutable::now();
@@ -126,6 +126,12 @@ class AttendanceSyncService
         Log::channel('attendance')->info('Device synced', [...$context, ...$summary, 'from' => $from->toIso8601String(), 'to' => $to->toIso8601String()]);
 
         return ['success' => true, 'message' => 'Synchronized.', ...$summary];
+    }
+
+    /** A pushing device proved it is alive (event or heartbeat). */
+    public function markSeen(AttendanceDevice $device): void
+    {
+        $device->forceFill(['last_sync_at' => now(), 'last_sync_status' => 'ok', 'last_error' => null])->save();
     }
 
     private function markSuccess(AttendanceDevice $device, ?CarbonImmutable $latest): void

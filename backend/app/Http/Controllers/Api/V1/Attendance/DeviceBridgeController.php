@@ -50,14 +50,19 @@ class DeviceBridgeController extends Controller
         ]);
 
         $timezone = $device->settings['timezone'] ?? $device->organization->timezone;
-        $events = array_map(fn (array $e) => new DeviceEvent(
-            time: CarbonImmutable::parse($e['time'], $timezone)->utc(),
-            employeeIdentifier: $e['employee_identifier'] ?? null,
-            cardNumber: $e['card_number'] ?? null,
-            type: DeviceEventType::tryFrom($e['event_type'] ?? 'unknown') ?? DeviceEventType::Unknown,
-            externalId: isset($e['external_id']) ? 'sn:'.$e['external_id'] : null,
-            payload: $e['payload'] ?? [],
-        ), $data['events']);
+        $events = array_map(function (array $e) use ($timezone) {
+            $time = CarbonImmutable::parse($e['time'], $timezone)->utc();
+
+            return new DeviceEvent(
+                time: $time,
+                employeeIdentifier: $e['employee_identifier'] ?? null,
+                cardNumber: $e['card_number'] ?? null,
+                type: DeviceEventType::tryFrom($e['event_type'] ?? 'unknown') ?? DeviceEventType::Unknown,
+                // Same key as the pull adapter: serial numbers wrap, so the time is included.
+                externalId: isset($e['external_id']) ? 'sn:'.$e['external_id'].':'.$time->format('YmdHis') : null,
+                payload: $e['payload'] ?? [],
+            );
+        }, $data['events']);
 
         return $this->ok($sync->ingestPushed($device, $events));
     }

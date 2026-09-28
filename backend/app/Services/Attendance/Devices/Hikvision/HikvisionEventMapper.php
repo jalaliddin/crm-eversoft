@@ -13,7 +13,7 @@ use Throwable;
  * Maps AcsEvent InfoList entries to DeviceEvent.
  *
  * Fields relied upon: time (ISO-8601, usually with offset), employeeNoString, cardNo,
- * serialNo (per-device event sequence), attendanceStatus (checkIn/checkOut/breakIn/breakOut/overtimeIn/overtimeOut/undefined),
+ * serialNo (per-device event sequence; wraps at 100000, so the dedup key also includes the time), attendanceStatus (checkIn/checkOut/breakIn/breakOut/overtimeIn/overtimeOut/undefined),
  * major / minor. Entries without a person or card (door alarms, tamper, etc.) are skipped.
  */
 class HikvisionEventMapper
@@ -42,7 +42,8 @@ class HikvisionEventMapper
             employeeIdentifier: $identifier !== '' ? $identifier : null,
             cardNumber: $card !== '' ? $card : null,
             type: $this->type((string) ($info['attendanceStatus'] ?? '')),
-            externalId: isset($info['serialNo']) && $info['serialNo'] !== '' ? 'sn:'.$info['serialNo'] : null,
+            // serialNo wraps around (range 1–100000 per the ISAPI guide), so the time is part of the key.
+            externalId: isset($info['serialNo']) && $info['serialNo'] !== '' ? 'sn:'.$info['serialNo'].':'.$time->format('YmdHis') : null,
             payload: array_intersect_key($info, array_flip([
                 'major', 'minor', 'time', 'employeeNoString', 'cardNo', 'name', 'serialNo', 'attendanceStatus',
                 'currentVerifyMode', 'doorNo', 'cardReaderNo', 'userType', 'mask',

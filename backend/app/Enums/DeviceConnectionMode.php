@@ -12,12 +12,15 @@ enum DeviceConnectionMode: string
 
     case Direct = 'direct';
     case Bridge = 'bridge';
+    // The terminal itself posts ISAPI event notifications (HTTP listening host) to the CRM.
+    case Push = 'push';
 
     public function label(): string
     {
         return match ($this) {
             self::Direct => 'Direct',
             self::Bridge => 'Bridge',
+            self::Push => 'HTTP push',
         };
     }
 }

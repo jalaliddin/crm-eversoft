@@ -443,7 +443,7 @@ export interface AttendanceDevice {
   model: string | null
   serial_number: string | null
   type: string
-  connection_mode: 'direct' | 'bridge'
+  connection_mode: 'direct' | 'bridge' | 'push'
   ip_address: string | null
   port: number | null
   protocol: 'http' | 'https'
@@ -458,6 +458,21 @@ export interface AttendanceDevice {
   settings: { timezone?: string }
   identifiers_count?: number
   unmatched_events_count?: number
+}
+
+export interface DevicePushLog {
+  id: number
+  device: Ref | null
+  status: 'accepted' | 'heartbeat' | 'ignored' | 'unparsed' | 'rejected' | 'failed'
+  event_type: string | null
+  events_count: number
+  stored_count: number
+  summary: string | null
+  content_type: string | null
+  remote_ip: string | null
+  body_excerpt: string | null
+  error: string | null
+  created_at: string
 }
 
 export interface RawEvent {

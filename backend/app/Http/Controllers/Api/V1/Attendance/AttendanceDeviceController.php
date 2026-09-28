@@ -11,7 +11,9 @@ use App\Enums\DeviceVendor;
 use App\Enums\RawEventStatus;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\AttendanceDeviceResource;
+use App\Http\Resources\DevicePushLogResource;
 use App\Models\Attendance\AttendanceDevice;
+use App\Models\Attendance\AttendanceDevicePushLog;
 use App\Services\Attendance\AttendanceDeviceManager;
 use App\Services\Attendance\AttendanceSyncService;
 use App\Services\Attendance\Devices\DeviceAddressGuard;
@@ -72,12 +74,15 @@ class AttendanceDeviceController extends Controller
 
     public function test(AttendanceDevice $attendanceDevice, AttendanceDeviceManager $manager): JsonResponse
     {
-        if ($attendanceDevice->connection_mode === DeviceConnectionMode::Bridge) {
+        if (in_array($attendanceDevice->connection_mode, [DeviceConnectionMode::Bridge, DeviceConnectionMode::Push], true)) {
+            // The server cannot reach pushing devices; report when data last arrived instead.
+            $source = $attendanceDevice->connection_mode === DeviceConnectionMode::Push ? 'the terminal' : 'the bridge agent';
+
             return $this->ok([
                 'success' => $attendanceDevice->last_sync_at !== null && $attendanceDevice->last_sync_at->greaterThan(now()->subMinutes(15)),
                 'message' => $attendanceDevice->last_sync_at
-                    ? 'Bridge device. Last event batch received '.$attendanceDevice->last_sync_at->diffForHumans().'.'
-                    : 'Bridge device. No data received from the bridge agent yet.',
+                    ? 'Last data from '.$source.' received '.$attendanceDevice->last_sync_at->diffForHumans().'.'
+                    : 'No data received from '.$source.' yet.',
             ]);
         }
 
@@ -112,7 +117,7 @@ class AttendanceDeviceController extends Controller
     /** Push mapped employees to the terminal (create/update users, remove inactive). */
     public function pushEmployees(AttendanceDevice $attendanceDevice, AttendanceDeviceManager $manager): JsonResponse
     {
-        abort_if($attendanceDevice->connection_mode === DeviceConnectionMode::Bridge, 422, 'Bridge devices are managed on-site.');
+        abort_if($attendanceDevice->connection_mode !== DeviceConnectionMode::Direct, 422, 'The server cannot reach this device; manage its users on the terminal.');
 
         try {
             $manager->for($attendanceDevice)->syncEmployees();
@@ -127,14 +132,42 @@ class AttendanceDeviceController extends Controller
         return $this->ok(null, 'Employees pushed to device.');
     }
 
-    /** Issue a new bridge token (shown once; only its hash is stored). */
+    /**
+     * Issue a new device token (shown once; only its hash is stored).
+     * Bridge mode: bearer token for the hik-bridge agent. Push mode: secret part of the listening-host URL.
+     */
     public function bridgeToken(AttendanceDevice $attendanceDevice): JsonResponse
     {
-        $token = 'hbr_'.Str::random(48);
-        $attendanceDevice->forceFill(['bridge_token_hash' => hash('sha256', $token)])->save();
-        $this->audit->log('device.bridge_token_issued', $attendanceDevice);
+        $push = $attendanceDevice->connection_mode === DeviceConnectionMode::Push;
+        abort_unless($push || $attendanceDevice->connection_mode === DeviceConnectionMode::Bridge, 422, 'Tokens are only used by bridge and push devices.');
 
-        return $this->ok(['token' => $token, 'device_id' => $attendanceDevice->id], 'Copy this token now; it will not be shown again.');
+        $token = ($push ? 'hpt_' : 'hbr_').Str::random(48);
+        $attendanceDevice->forceFill(['bridge_token_hash' => hash('sha256', $token)])->save();
+        $this->audit->log($push ? 'device.push_url_issued' : 'device.bridge_token_issued', $attendanceDevice);
+
+        return $this->ok([
+            'token' => $token,
+            'device_id' => $attendanceDevice->id,
+            'push_path' => $push ? '/api/v1/hikvision/push/'.$token : null,
+        ], 'Copy this now; it will not be shown again.');
+    }
+
+    /** Recent requests received from pushing terminals. */
+    public function pushLogs(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'device_id' => ['nullable', 'integer'],
+            'status' => ['nullable', 'in:accepted,heartbeat,ignored,unparsed,rejected,failed'],
+        ]);
+
+        $logs = AttendanceDevicePushLog::query()
+            ->with('device:id,name')
+            ->when($data['device_id'] ?? null, fn ($q, $v) => $q->where('device_id', $v))
+            ->when($data['status'] ?? null, fn ($q, $v) => $q->where('status', $v))
+            ->orderByDesc('id')
+            ->paginate($this->perPage($request, 50));
+
+        return $this->paginated($logs, DevicePushLogResource::class);
     }
 
     /** @return array<string, mixed> */

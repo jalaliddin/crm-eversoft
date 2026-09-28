@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\V1\Attendance\AttendanceController;
 use App\Http\Controllers\Api\V1\Attendance\AttendanceDeviceController;
 use App\Http\Controllers\Api\V1\Attendance\DeviceBridgeController;
+use App\Http\Controllers\Api\V1\Attendance\HikvisionPushController;
 use App\Http\Controllers\Api\V1\Attendance\RawEventController;
 use App\Http\Controllers\Api\V1\Auth\AuthController;
 use App\Http\Controllers\Api\V1\Auth\ProfileController;
@@ -54,6 +55,11 @@ Route::prefix('v1')->group(function (): void {
 
     // On-site bridge agents (device token, no user session)
     Route::post('device-bridge/events', [DeviceBridgeController::class, 'events'])->middleware('throttle:device-ingest');
+
+    // Terminals pushing ISAPI event notifications (listening host). The secret token identifies the device.
+    Route::match(['POST', 'PUT'], 'hikvision/push/{token}', HikvisionPushController::class)
+        ->where('token', '[A-Za-z0-9_]{20,100}')
+        ->middleware('throttle:device-ingest');
 
     Route::middleware(['auth:sanctum', 'throttle:api'])->group(function (): void {
         Route::post('auth/logout', [AuthController::class, 'logout']);
@@ -216,6 +222,7 @@ Route::prefix('v1')->group(function (): void {
             Route::delete('attendance/{attendance}', [AttendanceController::class, 'destroy'])->whereNumber('attendance');
 
             Route::get('attendance-devices', [AttendanceDeviceController::class, 'index'])->middleware('can:devices.view');
+            Route::get('attendance-devices/push-logs', [AttendanceDeviceController::class, 'pushLogs'])->middleware('can:devices.view');
             Route::get('attendance-devices/{attendanceDevice}', [AttendanceDeviceController::class, 'show'])->middleware('can:devices.view');
             Route::post('attendance-devices/{attendanceDevice}/test', [AttendanceDeviceController::class, 'test'])->middleware('can:devices.sync');
             Route::post('attendance-devices/{attendanceDevice}/sync', [AttendanceDeviceController::class, 'sync'])->middleware('can:devices.sync');

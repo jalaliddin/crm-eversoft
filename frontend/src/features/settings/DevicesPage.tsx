@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
-  ActionIcon, Alert, Badge, Button, Card, Code, CopyButton, Group, Menu, SegmentedControl, Select, SimpleGrid, Stack, Tabs, Text, Tooltip,
+  ActionIcon, Alert, Badge, Button, Card, Code, CopyButton, Drawer, Group, Menu, SegmentedControl, Select, SimpleGrid, Stack, Tabs, Text, Tooltip,
 } from '@mantine/core'
 import { IconCheck, IconCopy, IconDots, IconPlugConnected, IconPlus, IconRefresh } from '@tabler/icons-react'
 import { useForm, useWatch } from 'react-hook-form'
@@ -22,7 +22,8 @@ import { useApiMutation } from '@/hooks/useApiMutation'
 import { useDevices, useEmployeesLookup, toOptions } from '@/hooks/useLookups'
 import { useListParams } from '@/hooks/useListParams'
 import { useAuth } from '@/features/auth/useAuth'
-import type { AttendanceDevice, RawEvent } from '@/types/models'
+import type { AttendanceDevice, DevicePushLog, RawEvent } from '@/types/models'
+import { PushSetup } from './PushSetup'
 
 interface DeviceValues {
   name: string
@@ -82,9 +83,19 @@ function DeviceForm({ device, opened, onClose }: { device?: AttendanceDevice | n
           fullWidth
           value={mode}
           onChange={(v) => form.setValue('connection_mode', v)}
-          data={[{ value: 'direct', label: 'Server connects to the device' }, { value: 'bridge', label: 'On-site bridge pushes events' }]}
+          data={[
+            { value: 'direct', label: 'Server connects' },
+            { value: 'push', label: 'Terminal pushes' },
+            { value: 'bridge', label: 'On-site bridge' },
+          ]}
         />
-        {mode === 'bridge' ? (
+        {mode === 'push' ? (
+          <Alert mt="sm" variant="light">
+            The terminal sends each event to the CRM itself (its HTTP listening host). No inbound access to the terminal is needed.
+            After saving, choose <strong>Generate push URL</strong> in the device menu and enter it on the terminal. Missed events during an
+            outage are not re-sent, and the CRM cannot send commands to the terminal in this mode.
+          </Alert>
+        ) : mode === 'bridge' ? (
           <Alert mt="sm" variant="light">Use this when the terminal is on a local network the server cannot reach. After saving, generate a bridge token and configure the hik-bridge agent on-site.</Alert>
         ) : direct && (
           <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="sm" mt="sm">
@@ -101,7 +112,12 @@ function DeviceForm({ device, opened, onClose }: { device?: AttendanceDevice | n
   )
 }
 
-function DeviceCard({ device, onEdit, onToken }: { device: AttendanceDevice; onEdit: () => void; onToken: (token: string) => void }) {
+interface IssuedToken {
+  token: string
+  push_path: string | null
+}
+
+function DeviceCard({ device, onEdit, onToken }: { device: AttendanceDevice; onEdit: () => void; onToken: (issued: IssuedToken) => void }) {
   const { can } = useAuth()
   const invalidate = [['attendance-devices'], ['attendance'], ['raw-events']]
   const test = useApiMutation<{ success: boolean; message: string; latency_ms: number | null; info: Record<string, string> }>({
@@ -117,7 +133,7 @@ function DeviceCard({ device, onEdit, onToken }: { device: AttendanceDevice; onE
     onSuccess: (r) => { if (!r.success) notifyError(new Error(r.message)) },
   })
   const push = useApiMutation({ mutationFn: () => api.post(`/attendance-devices/${device.id}/push-employees`), invalidate: [] })
-  const token = useApiMutation<{ token: string }>({ mutationFn: () => api.post(`/attendance-devices/${device.id}/bridge-token`), invalidate: [['attendance-devices']], onSuccess: (r) => onToken(r.token) })
+  const token = useApiMutation<IssuedToken>({ mutationFn: () => api.post(`/attendance-devices/${device.id}/bridge-token`), invalidate: [['attendance-devices']], onSuccess: onToken })
   const remove = useApiMutation({ mutationFn: () => api.delete(`/attendance-devices/${device.id}`), invalidate: [['attendance-devices']], successMessage: 'Device removed.' })
 
   const healthy = device.last_sync_status === 'ok'
@@ -132,7 +148,7 @@ function DeviceCard({ device, onEdit, onToken }: { device: AttendanceDevice; onE
             {device.vendor === 'fake' && <Badge color="gray">Simulator</Badge>}
           </Group>
           <Text size="sm" c="dimmed">
-            {[device.model, device.connection_mode === 'bridge' ? 'via bridge' : device.ip_address ? `${device.protocol}://${device.ip_address}:${device.port ?? 80}` : null, device.serial_number].filter(Boolean).join(' · ')}
+            {[device.model, device.connection_mode === 'bridge' ? 'via bridge' : device.connection_mode === 'push' ? 'terminal pushes events' : device.ip_address ? `${device.protocol}://${device.ip_address}:${device.port ?? 80}` : null, device.serial_number].filter(Boolean).join(' · ')}
           </Text>
         </div>
         {can('devices.manage') && (
@@ -141,6 +157,13 @@ function DeviceCard({ device, onEdit, onToken }: { device: AttendanceDevice; onE
             <Menu.Dropdown>
               <Menu.Item onClick={onEdit}>Edit</Menu.Item>
               {device.connection_mode === 'direct' && device.vendor === 'hikvision' && <Menu.Item onClick={() => push.mutate(undefined, { onSuccess: () => notifySuccess('Employees pushed to the terminal.') })}>Push employees to device</Menu.Item>}
+              {device.connection_mode === 'push' && (
+                <Menu.Item onClick={() => (device.has_bridge_token
+                  ? confirmAction({ title: 'Generate a new push URL?', message: 'The current URL stops working immediately; update it on the terminal.', confirmLabel: 'Generate', onConfirm: () => token.mutate() })
+                  : token.mutate())}>
+                  {device.has_bridge_token ? 'Regenerate push URL' : 'Generate push URL'}
+                </Menu.Item>
+              )}
               {device.connection_mode === 'bridge' && <Menu.Item onClick={() => confirmAction({ title: 'Issue a new bridge token?', message: 'The current token stops working immediately.', confirmLabel: 'Issue token', onConfirm: () => token.mutate() })}>{device.has_bridge_token ? 'Rotate bridge token' : 'Generate bridge token'}</Menu.Item>}
               <Menu.Divider />
               <Menu.Item color="red" onClick={() => confirmAction({ title: `Remove ${device.name}?`, message: 'Stored punches and attendance are kept.', confirmLabel: 'Remove', danger: true, onConfirm: () => remove.mutate() })}>Remove</Menu.Item>
@@ -261,11 +284,66 @@ function RawEventsTab() {
   )
 }
 
+function PushLogTab() {
+  const list = useListParams({ per_page: '50' })
+  const { data: devices } = useDevices()
+  const [open, setOpen] = useState<DevicePushLog | null>(null)
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['push-logs', list.query],
+    queryFn: () => api.list<DevicePushLog>('/attendance-devices/push-logs', list.query),
+    placeholderData: (p) => p,
+    refetchInterval: 15_000,
+  })
+  const pushDevices = (devices ?? []).filter((d) => d.connection_mode === 'push')
+
+  return (
+    <>
+      <Group mb="md" gap="sm" justify="space-between">
+        <Group gap="sm">
+          <Select placeholder="All push devices" data={toOptions(pushDevices)} value={list.params.device_id ?? null} onChange={(v) => list.set({ device_id: v })} clearable w={220} aria-label="Device" />
+          <Select placeholder="Any result" data={['accepted', 'heartbeat', 'ignored', 'unparsed', 'rejected', 'failed']} value={list.params.status ?? null} onChange={(v) => list.set({ status: v })} clearable w={160} aria-label="Result" />
+        </Group>
+        <Text size="xs" c="dimmed">Every request a terminal sends, kept 14 days. Pictures are never stored.</Text>
+      </Group>
+      <DataTable
+        rows={data?.data}
+        meta={data?.meta}
+        loading={isLoading}
+        error={error}
+        {...list.tableProps}
+        onRowClick={setOpen}
+        columns={[
+          { key: 'created_at', header: 'Received', render: (l) => <span className="tabular">{fmtDateTime(l.created_at)}</span> },
+          { key: 'device', header: 'Device', render: (l) => l.device?.name ?? '—' },
+          { key: 'status', header: 'Result', render: (l) => <StatusBadge status={l.status} /> },
+          { key: 'event_type', header: 'Event type', visibleFrom: 'md', render: (l) => l.event_type ?? '—' },
+          { key: 'summary', header: 'Details', render: (l) => <Text size="sm" lineClamp={1}>{l.error ?? l.summary ?? '—'}</Text> },
+          { key: 'stored', header: 'New punches', align: 'right', visibleFrom: 'sm', render: (l) => <span className="tabular">{l.stored_count}/{l.events_count}</span> },
+          { key: 'ip', header: 'From', visibleFrom: 'lg', render: (l) => l.remote_ip ?? '—' },
+        ]}
+        empty={{ title: 'Nothing received yet', message: 'After the push URL is set on the terminal, each scan and heartbeat shows up here.' }}
+      />
+      <Drawer opened={!!open} onClose={() => setOpen(null)} title="Push request" size="lg">
+        {open && (
+          <Stack gap="sm">
+            <Group gap="xs"><StatusBadge status={open.status} /><Text size="sm">{fmtDateTime(open.created_at)} · {open.remote_ip}</Text></Group>
+            <Text size="sm"><strong>Content type:</strong> {open.content_type ?? '—'}</Text>
+            {open.error && <Alert color="red" variant="light">{open.error}</Alert>}
+            {open.summary && <Text size="sm"><strong>Parsed:</strong> {open.summary}</Text>}
+            <Text size="sm" fw={600}>Body (text parts, truncated)</Text>
+            <Code block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 480, overflow: 'auto' }}>{open.body_excerpt ?? '(empty)'}</Code>
+          </Stack>
+        )}
+      </Drawer>
+    </>
+  )
+}
+
 export default function DevicesPage() {
   const { can } = useAuth()
   const { data, isLoading } = useDevices()
   const [editing, setEditing] = useState<AttendanceDevice | null | undefined>(undefined)
-  const [token, setToken] = useState<string | null>(null)
+  const [issued, setIssued] = useState<IssuedToken | null>(null)
 
   return (
     <>
@@ -279,32 +357,38 @@ export default function DevicesPage() {
           <Tabs.Tab value="devices">Devices</Tabs.Tab>
           <Tabs.Tab value="unmatched">Unmatched punches</Tabs.Tab>
           <Tabs.Tab value="events">Punch log</Tabs.Tab>
+          <Tabs.Tab value="pushes">Push log</Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="devices">
           {isLoading ? <LoadingState /> : !data?.length ? (
             <EmptyState title="No devices yet" message="Add your Hikvision terminal. If it is not reachable from the internet, choose the on-site bridge." action={can('devices.manage') && <Button onClick={() => setEditing(null)}>Add device</Button>} />
           ) : (
             <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="md">
-              {data.map((d) => <DeviceCard key={d.id} device={d} onEdit={() => setEditing(d)} onToken={setToken} />)}
+              {data.map((d) => <DeviceCard key={d.id} device={d} onEdit={() => setEditing(d)} onToken={setIssued} />)}
             </SimpleGrid>
           )}
         </Tabs.Panel>
         <Tabs.Panel value="unmatched"><UnmatchedTab /></Tabs.Panel>
         <Tabs.Panel value="events"><RawEventsTab /></Tabs.Panel>
+        <Tabs.Panel value="pushes"><PushLogTab /></Tabs.Panel>
       </Tabs>
 
       <DeviceForm opened={editing !== undefined} onClose={() => setEditing(undefined)} device={editing} />
 
-      <EntityModal opened={!!token} onClose={() => setToken(null)} title="Bridge token" size="lg">
-        <Stack gap="sm">
-          <Alert color="saffron" variant="light">Copy it now — it is shown only once. Put it in the bridge agent’s <Code>BRIDGE_TOKEN</Code> setting.</Alert>
-          <Group wrap="nowrap" gap="xs">
-            <Code block style={{ flex: 1, wordBreak: 'break-all' }}>{token}</Code>
-            <CopyButton value={token ?? ''}>
-              {({ copied, copy }) => <ActionIcon variant="light" onClick={copy} aria-label="Copy token">{copied ? <IconCheck size={16} /> : <IconCopy size={16} />}</ActionIcon>}
-            </CopyButton>
-          </Group>
-        </Stack>
+      <EntityModal opened={!!issued} onClose={() => setIssued(null)} title={issued?.push_path ? 'Push URL for the terminal' : 'Bridge token'} size="lg">
+        {issued?.push_path ? (
+          <PushSetup path={issued.push_path} />
+        ) : (
+          <Stack gap="sm">
+            <Alert color="saffron" variant="light">Copy it now — it is shown only once. Put it in the bridge agent’s <Code>BRIDGE_TOKEN</Code> setting.</Alert>
+            <Group wrap="nowrap" gap="xs">
+              <Code block style={{ flex: 1, wordBreak: 'break-all' }}>{issued?.token}</Code>
+              <CopyButton value={issued?.token ?? ''}>
+                {({ copied, copy }) => <ActionIcon variant="light" onClick={copy} aria-label="Copy token">{copied ? <IconCheck size={16} /> : <IconCopy size={16} />}</ActionIcon>}
+              </CopyButton>
+            </Group>
+          </Stack>
+        )}
       </EntityModal>
     </>
   )

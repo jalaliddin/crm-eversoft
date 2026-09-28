@@ -14,6 +14,7 @@ export const COLORS: Record<string, string> = {
   approved: 'teal', rejected: 'red', draft: 'gray', calculated: 'blue', paid: 'teal', closed: 'gray',
   // devices / raw events
   ok: 'teal', failed: 'red', processed: 'teal', unmatched: 'saffron', ignored: 'gray',
+  accepted: 'teal', heartbeat: 'blue', unparsed: 'saffron',
 }
 
 export const statusColor = (status?: string | null) => (status ? (COLORS[status] ?? 'gray') : 'gray')

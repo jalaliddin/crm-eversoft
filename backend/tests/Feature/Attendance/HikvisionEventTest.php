@@ -87,7 +87,7 @@ class HikvisionEventTest extends TestCase
 
         $this->assertCount(2, $events);
         $this->assertSame('1001', $events[0]->employeeIdentifier);
-        $this->assertSame('sn:1', $events[0]->externalId);
+        $this->assertSame('sn:1:20260921033105', $events[0]->externalId); // serial + UTC time (serials wrap at 100000)
         $this->assertSame(DeviceEventType::CheckIn, $events[0]->type);
         $this->assertSame('2026-09-21 03:31:05', $events[0]->time->format('Y-m-d H:i:s')); // UTC
         $this->assertSame(DeviceEventType::CheckOut, $events[1]->type);
